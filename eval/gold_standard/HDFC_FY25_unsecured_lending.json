@@ -1,0 +1,12 @@
+{
+    "test_id": "HDFC_FY25_unsecured_lending_001",
+    "query_theme": "unsecured_lending",
+    "bank_name": "HDFC_BANK",
+    "fiscal_year": "FY25",
+    "expected_metrics": {
+        "personal_loan_percent": 7.6,
+        "credit_card_npa": 0.72
+    },
+    "expected_pages": [9, 45, 217],
+    "source_document": "HDFC Bank Report.pdf"
+}

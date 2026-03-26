@@ -1,0 +1,11 @@
+{
+    "test_id": "HDFC_FY25_liquidity_risk_001",
+    "query_theme": "liquidity_risk",
+    "bank_name": "HDFC_BANK",
+    "fiscal_year": "FY25",
+    "expected_metrics": {
+        "lcr_percent": 118.96
+    },
+    "expected_pages": [235, 354],
+    "source_document": "HDFC Bank Report.pdf"
+}

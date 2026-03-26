@@ -1,0 +1,11 @@
+{
+    "test_id": "SBI_FY25_liquidity_risk_001",
+    "query_theme": "liquidity_risk",
+    "bank_name": "SBI",
+    "fiscal_year": "FY25",
+    "expected_metrics": {
+        "lcr_percent": 132.26
+    },
+    "expected_pages": [193, 194],
+    "source_document": "SBI Bank Report.pdf"
+}

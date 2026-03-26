@@ -1,0 +1,13 @@
+{
+    "test_id": "SBI_FY25_credit_risk_001",
+    "query_theme": "credit_risk",
+    "bank_name": "SBI",
+    "fiscal_year": "FY25",
+    "expected_metrics": {
+        "gross_npa_ratio": 1.82,
+        "net_npa_ratio": 0.47,
+        "provision_coverage_ratio": 74.42
+    },
+    "expected_pages": [18],
+    "source_document": "SBI Bank Report.pdf"
+}

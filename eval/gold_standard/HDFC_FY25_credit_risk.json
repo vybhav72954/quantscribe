@@ -1,0 +1,13 @@
+{
+    "test_id": "HDFC_FY25_credit_risk_001",
+    "query_theme": "credit_risk",
+    "bank_name": "HDFC_BANK",
+    "fiscal_year": "FY25",
+    "expected_metrics": {
+        "gross_npa_ratio": 1.33,
+        "net_npa_ratio": 0.43,
+        "provision_coverage_ratio": 67.86
+    },
+    "expected_pages": [9, 40, 54],
+    "source_document": "HDFC Bank Report.pdf"
+}

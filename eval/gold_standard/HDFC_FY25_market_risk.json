@@ -1,0 +1,13 @@
+{
+    "test_id": "HDFC_FY25_market_risk_001",
+    "query_theme": "market_risk",
+    "bank_name": "HDFC_BANK",
+    "fiscal_year": "FY25",
+    "expected_metrics": {
+        "interest_rate_risk_capital": 9117.78,
+        "forex_risk_capital": 1106.86,
+        "trading_book_size": 61878.69
+    },
+    "expected_pages": [337, 359],
+    "source_document": "HDFC Bank Report.pdf"
+}

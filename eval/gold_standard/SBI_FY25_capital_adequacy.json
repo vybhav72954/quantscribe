@@ -1,0 +1,13 @@
+{
+    "test_id": "SBI_FY25_capital_adequacy_001",
+    "query_theme": "capital_adequacy",
+    "bank_name": "SBI",
+    "fiscal_year": "FY25",
+    "expected_metrics": {
+        "cet1_ratio": 10.81,
+        "tier1_ratio": 12.11,
+        "total_car": 14.25
+    },
+    "expected_pages": [17, 190],
+    "source_document": "SBI Bank Report.pdf"
+}
