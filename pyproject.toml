@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "quantscribe"
@@ -21,7 +21,7 @@ dependencies = [
     # ── ETL & PDF Parsing ──
     "pdfplumber>=0.10.0",
     "PyMuPDF>=1.23.0",
-    "camelot-py[cv]>=0.11.0",
+    "camelot-py>=0.11.0",
 
     # ── Embeddings & Vector DB ──
     "sentence-transformers>=2.2.0",
@@ -34,6 +34,7 @@ dependencies = [
 
     # ── Data Validation & Schemas ──
     "pydantic>=2.5.0",
+    "pydantic-settings>=2.0.0",
 
     # ── Utilities ──
     "numpy>=1.24.0",

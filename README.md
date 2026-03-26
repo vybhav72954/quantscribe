@@ -33,16 +33,17 @@ User Query → Query Embedding → Fan-out Retrieval (per bank) → LLM Extracti
 
 ## Quick Start
 
-All the ![Data](https://drive.google.com/drive/folders/1KVUonddJzhCiYDgTqJ09Sk_ngi9Wnupz?usp=sharing) is available in the google drive link.
+All the ![Data](https://drive.google.com/drive/u/5/folders/1KVUonddJzhCiYDgTqJ09Sk_ngi9Wnupz) is available in the google drive link.
 Please make sure you download the data and place it in the `data/pdfs` folder. (Create a new folder if required)
 
 ```bash
 # Clone
 git clone https://github.com/vybhav72954/quantscribe.git
 cd quantscribe
+# Please Create venv beforehand, i recommned using uv, youcan use anything else as well.
 
 # Install
-pip install -e ".[dev]"
+uv pip install -e ".[dev]"
 
 # Configure
 cp .env.example .env
