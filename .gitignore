@@ -35,6 +35,7 @@ indices/**/*.json
 logs/**/*.log
 logs/**/*.json
 !logs/.gitkeep
+logs/*.jsonl
 
 # ── OS ──
 .DS_Store
