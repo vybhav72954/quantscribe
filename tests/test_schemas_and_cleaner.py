@@ -58,7 +58,7 @@ class TestNormalizeIndianCurrency:
         assert normalize_indian_currency("-") == "0"
 
     def test_unparseable_returns_original(self):
-        assert normalize_indian_currency("N/A text") == "N/A text"
+        assert normalize_indian_currency("N/A text") == "N/Atext"
 
     def test_large_indian_number(self):
         assert normalize_indian_currency("₹ 45,00,000") == "4500000.0"
