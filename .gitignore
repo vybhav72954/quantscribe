@@ -1,4 +1,45 @@
-reports
+# ── Project Report ──
 reports/
+reports
+New folder/
+data/pdfs/
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Environment ──
+.env
+.venv/
+venv/
+env/
+
+# ── IDE ──
+.vscode/
 .idea/
-.idea
+*.swp
+*.swo
+
+# ── Data (too large for git) ──
+data/pdfs/*.pdf
+indices/**/*.faiss
+indices/**/*.json
+!indices/.gitkeep
+
+# ── Logs ──
+logs/**/*.log
+logs/**/*.json
+!logs/.gitkeep
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── Jupyter / Kaggle ──
+.ipynb_checkpoints/
+*.ipynb
