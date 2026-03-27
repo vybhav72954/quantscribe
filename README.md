@@ -67,11 +67,12 @@ quantscribe/
 │   ├── llm/                 # Prompts, extraction chain, peer comparison
 │   └── evaluation/          # Numerical accuracy, RAGAS, DeepEval
 ├── scripts/
-│   └── kaggle_embed.py      # Kaggle H100 batch embedding script
 ├── eval/gold_standard/      # Ground-truth test cases
 ├── indices/                 # FAISS indices (git-ignored)
 ├── tests/                   # Test suite
-└── docs/                    # Specification documents
+├── data/pdfs/               # Data folder (git-ignored)
+├── docs/                    # Specification documents
+└── logs/                    # Logs (git-ignored)
 ```
 
 ## Development Phases
