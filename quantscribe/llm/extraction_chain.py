@@ -23,7 +23,10 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 
 from quantscribe.schemas.extraction import ThematicExtraction
-from quantscribe.llm.prompts import THEMATIC_EXTRACTION_PROMPT_STRUCTURED
+from quantscribe.llm.prompts import (
+    THEMATIC_EXTRACTION_PROMPT_STRUCTURED,
+    get_metric_names_instruction,
+)
 from quantscribe.config import get_settings
 from quantscribe.logging_config import get_logger
 
@@ -55,14 +58,12 @@ def build_extraction_chain(max_retries: int = 3):
     )
 
     # ── Use Gemini native structured output ──
-    # This forces Gemini to return valid JSON matching the schema directly,
-    # bypassing the markdown fence wrapping that breaks PydanticOutputParser.
     structured_llm = llm.with_structured_output(ThematicExtraction)
 
-    # ── Prompt template (no {format_instructions} needed) ──
+    # ── Prompt template ──
     prompt = PromptTemplate(
         template=THEMATIC_EXTRACTION_PROMPT_STRUCTURED,
-        input_variables=["theme", "bank_contexts"],
+        input_variables=["theme", "bank_contexts", "metric_names_instruction"],
     )
 
     # ── Chain: prompt → structured LLM ──
@@ -81,17 +82,15 @@ def build_extraction_chain(max_retries: int = 3):
         """
         Invoke the extraction chain with retry logic.
 
-        On failure:
-        1. Logs the full error message (visible in logs/quantscribe.jsonl)
-        2. Appends the error to context so the LLM can self-correct
-        3. Retries up to max_retries times
-
-        After successful parse:
-        - Validates that every citation excerpt appears in the provided context
+        Automatically injects the metric_names_instruction based on
+        the theme, so callers only need to pass theme + bank_contexts.
         """
+        theme = inputs["theme"]
+
         working_inputs = {
-            "theme": inputs["theme"],
+            "theme": theme,
             "bank_contexts": inputs["bank_contexts"],
+            "metric_names_instruction": get_metric_names_instruction(theme),
         }
 
         last_error = None
@@ -112,7 +111,7 @@ def build_extraction_chain(max_retries: int = 3):
 
                 logger.info(
                     "extraction_success",
-                    theme=inputs["theme"],
+                    theme=theme,
                     bank=result.bank_name,
                     metrics=len(result.extracted_metrics),
                     risk_score=result.risk_score,
@@ -127,7 +126,7 @@ def build_extraction_chain(max_retries: int = 3):
                     attempt=attempt + 1,
                     max_retries=max_retries,
                     error=str(e)[:500],
-                    theme=inputs["theme"],
+                    theme=theme,
                 )
 
                 if attempt < max_retries - 1:
@@ -140,12 +139,12 @@ def build_extraction_chain(max_retries: int = 3):
 
         logger.error(
             "extraction_failed",
-            theme=inputs["theme"],
+            theme=theme,
             retries=max_retries,
             error=str(last_error)[:500],
         )
         raise RuntimeError(
-            f"Extraction failed for theme='{inputs.get('theme')}' "
+            f"Extraction failed for theme='{theme}' "
             f"after {max_retries} retries: {last_error}"
         ) from last_error
 
@@ -164,15 +163,6 @@ def _validate_citations(
     Uses word-level overlap since LLMs sometimes paraphrase slightly.
     Threshold is 0.5 (50%) to account for Gemini's tendency to lightly
     rephrase excerpts even in structured output mode.
-
-    Args:
-        extraction: The parsed ThematicExtraction object.
-        context_text: The original bank_contexts string sent to the LLM.
-        min_overlap: Minimum fraction of excerpt words that must appear
-                     in the context (default: 50%).
-
-    Raises:
-        ValueError: If any citation fails validation.
     """
     context_words = set(context_text.lower().split())
 

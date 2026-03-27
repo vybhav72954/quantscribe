@@ -42,6 +42,10 @@ dependencies = [
     "structlog>=23.1.0",
     "python-dotenv>=1.0.0",
     "tqdm>=4.65.0",
+
+    # ── Streamlit UI ──
+    "streamlit>=1.30.0",
+    "plotly>=5.0.0",
 ]
 
 [project.optional-dependencies]

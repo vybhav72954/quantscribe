@@ -42,3 +42,7 @@ Thumbs.db
 # ── Jupyter / Kaggle ──
 .ipynb_checkpoints/
 *.ipynb
+
+.deepeval/
+.pytest_cache/
+.streamlit/secrets.toml
