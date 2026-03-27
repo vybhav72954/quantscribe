@@ -27,6 +27,8 @@ env/
 
 # ── Data (too large for git) ──
 data/pdfs/*.pdf
+data/chunks/
+
 indices/**/*.faiss
 indices/**/*.json
 !indices/.gitkeep
@@ -44,3 +46,6 @@ Thumbs.db
 # ── Jupyter / Kaggle ──
 .ipynb_checkpoints/
 *.ipynb
+
+# --- Output ---
+quantscribe.jsonl
