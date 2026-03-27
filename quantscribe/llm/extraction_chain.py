@@ -4,6 +4,11 @@ LLM extraction chain with Pydantic output parsing and retry logic.
 Uses LangChain + Gemini API to extract structured ThematicExtraction
 objects from retrieved financial text.
 
+IMPORTANT: Uses Gemini's native structured output (with_structured_output)
+instead of PydanticOutputParser. This bypasses the markdown fence issue
+where Gemini wraps JSON in ```json blocks that PydanticOutputParser
+cannot parse, causing silent failures after all retries are exhausted.
+
 Usage:
     from quantscribe.llm.extraction_chain import build_extraction_chain
 
@@ -15,11 +20,10 @@ Usage:
 from __future__ import annotations
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import PromptTemplate
 
 from quantscribe.schemas.extraction import ThematicExtraction
-from quantscribe.llm.prompts import THEMATIC_EXTRACTION_PROMPT
+from quantscribe.llm.prompts import THEMATIC_EXTRACTION_PROMPT_STRUCTURED
 from quantscribe.config import get_settings
 from quantscribe.logging_config import get_logger
 
@@ -50,24 +54,26 @@ def build_extraction_chain(max_retries: int = 3):
         max_output_tokens=settings.llm_max_output_tokens,
     )
 
-    # ── Pydantic output parser ──
-    parser = PydanticOutputParser(pydantic_object=ThematicExtraction)
+    # ── Use Gemini native structured output ──
+    # This forces Gemini to return valid JSON matching the schema directly,
+    # bypassing the markdown fence wrapping that breaks PydanticOutputParser.
+    structured_llm = llm.with_structured_output(ThematicExtraction)
 
-    # ── Prompt template ──
+    # ── Prompt template (no {format_instructions} needed) ──
     prompt = PromptTemplate(
-        template=THEMATIC_EXTRACTION_PROMPT,
+        template=THEMATIC_EXTRACTION_PROMPT_STRUCTURED,
         input_variables=["theme", "bank_contexts"],
-        partial_variables={"format_instructions": parser.get_format_instructions()},
     )
 
-    # ── Chain: prompt → LLM → parse ──
-    chain = prompt | llm | parser
+    # ── Chain: prompt → structured LLM ──
+    chain = prompt | structured_llm
 
     logger.info(
         "extraction_chain_built",
         model=settings.llm_model,
         temperature=settings.llm_temperature,
         max_retries=max_retries,
+        output_mode="structured_output",
     )
 
     # ── Callable with retry + validation ──
@@ -76,14 +82,13 @@ def build_extraction_chain(max_retries: int = 3):
         Invoke the extraction chain with retry logic.
 
         On failure:
-        1. Logs the error
-        2. Appends the error message to context so the LLM can self-correct
+        1. Logs the full error message (visible in logs/quantscribe.jsonl)
+        2. Appends the error to context so the LLM can self-correct
         3. Retries up to max_retries times
 
         After successful parse:
         - Validates that every citation excerpt appears in the provided context
         """
-        # Work on a copy so retries don't permanently mutate the input
         working_inputs = {
             "theme": inputs["theme"],
             "bank_contexts": inputs["bank_contexts"],
@@ -93,8 +98,14 @@ def build_extraction_chain(max_retries: int = 3):
 
         for attempt in range(max_retries):
             try:
-                # ── Invoke the chain ──
                 result = chain.invoke(working_inputs)
+
+                # Gemini structured output can return None on schema mismatch
+                if result is None:
+                    raise ValueError(
+                        "Gemini returned None — schema mismatch or empty response. "
+                        "Check that all required fields are populated."
+                    )
 
                 # ── Post-validation: check citations ──
                 _validate_citations(result, inputs["bank_contexts"])
@@ -115,25 +126,23 @@ def build_extraction_chain(max_retries: int = 3):
                     "extraction_attempt_failed",
                     attempt=attempt + 1,
                     max_retries=max_retries,
-                    error=str(e)[:300],
+                    error=str(e)[:500],
                     theme=inputs["theme"],
                 )
 
                 if attempt < max_retries - 1:
-                    # Append error context for LLM self-correction
                     working_inputs["bank_contexts"] += (
                         f"\n\n[SYSTEM: Your previous response produced an error: "
                         f"{str(e)[:200]}. "
-                        f"Please fix the JSON output and try again. "
+                        f"Please fix the output and try again. "
                         f"Ensure all required fields are present and valid.]"
                     )
 
-        # All retries exhausted
         logger.error(
             "extraction_failed",
             theme=inputs["theme"],
             retries=max_retries,
-            error=str(last_error)[:300],
+            error=str(last_error)[:500],
         )
         raise RuntimeError(
             f"Extraction failed for theme='{inputs.get('theme')}' "
@@ -146,19 +155,21 @@ def build_extraction_chain(max_retries: int = 3):
 def _validate_citations(
     extraction: ThematicExtraction,
     context_text: str,
-    min_overlap: float = 0.6,
+    min_overlap: float = 0.5,
 ) -> None:
     """
     Validate that every citation's source_excerpt actually appears
     in the provided context.
 
     Uses word-level overlap since LLMs sometimes paraphrase slightly.
+    Threshold is 0.5 (50%) to account for Gemini's tendency to lightly
+    rephrase excerpts even in structured output mode.
 
     Args:
         extraction: The parsed ThematicExtraction object.
         context_text: The original bank_contexts string sent to the LLM.
         min_overlap: Minimum fraction of excerpt words that must appear
-                     in the context (default: 60%).
+                     in the context (default: 50%).
 
     Raises:
         ValueError: If any citation fails validation.
@@ -183,7 +194,7 @@ def _validate_citations(
             raise ValueError(
                 f"Citation validation failed for metric '{metric.metric_name}': "
                 f"only {overlap:.0%} word overlap (minimum {min_overlap:.0%}). "
-                f"Excerpt: '{excerpt[:100]}...'"
+                f"Excerpt: '{excerpt[:150]}'"
             )
 
     logger.info(

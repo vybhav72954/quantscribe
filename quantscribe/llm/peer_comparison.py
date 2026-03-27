@@ -6,9 +6,10 @@ End-to-end pipeline:
 2. Fan-out retrieval to each bank's FAISS index independently
 3. Format retrieved chunks with rigid delimiters
 4. Run LLM extraction ONCE PER BANK (prevents cross-entity contamination)
-5. Rank banks by risk_score
-6. Synthesize cross-cutting insights via a second LLM call
-7. Return a validated PeerComparisonReport
+5. Back-fill relevance_score on each CitationTrace from actual FAISS scores
+6. Rank banks by risk_score
+7. Synthesize cross-cutting insights via a second LLM call
+8. Return a validated PeerComparisonReport
 
 Usage:
     from quantscribe.llm.peer_comparison import run_peer_comparison
@@ -26,7 +27,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Optional
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -101,6 +101,13 @@ def run_peer_comparison(
 
         results = all_results[bank_name]
 
+        # Build a page → score lookup for back-filling relevance_score
+        # after extraction (the LLM doesn't know FAISS scores)
+        page_score_map: dict[int, float] = {
+            r["metadata"]["page_number"]: r["score"]
+            for r in results
+        }
+
         # Format chunks with rigid delimiters
         bank_context = _format_bank_context(bank_name, results)
 
@@ -117,6 +124,18 @@ def run_peer_comparison(
                 "theme": theme,
                 "bank_contexts": bank_context,
             })
+
+            # ── Step 5: Back-fill relevance_score from real FAISS scores ──
+            # The LLM leaves relevance_score=0.0 (the default).
+            # We fill it with the actual cosine similarity for the cited page.
+            # If the page isn't in our retrieval results, use the minimum score.
+            min_score = min(r["score"] for r in results)
+            for metric in extraction.extracted_metrics:
+                cited_page = metric.citation.page_number
+                metric.citation.relevance_score = page_score_map.get(
+                    cited_page, min_score
+                )
+
             extractions.append(extraction)
 
             logger.info(
@@ -130,7 +149,7 @@ def run_peer_comparison(
                 "extraction_failed_for_bank",
                 bank=bank_name,
                 theme=theme,
-                error=str(e)[:200],
+                error=str(e)[:300],
             )
             # Continue with other banks — don't abort the whole comparison
 
@@ -140,17 +159,17 @@ def run_peer_comparison(
             f"All banks failed. Check logs for details."
         )
 
-    # ── Step 5: Rank by risk score (ascending = lowest risk first) ──
+    # ── Step 6: Rank by risk score (ascending = lowest risk first) ──
     ranked = sorted(extractions, key=lambda x: x.risk_score)
     peer_ranking = [
         PeerRankEntry(bank=e.bank_name, risk_score=e.risk_score, rank=i + 1)
         for i, e in enumerate(ranked)
     ]
 
-    # ── Step 6: Synthesize cross-cutting insights ──
+    # ── Step 7: Synthesize cross-cutting insights ──
     insights = _synthesize_insights(theme, peer_group, extractions)
 
-    # ── Step 7: Build report ──
+    # ── Step 8: Build report ──
     report = PeerComparisonReport(
         query_theme=theme,
         peer_group=peer_group,
@@ -183,7 +202,6 @@ def _build_query_text(theme: str) -> str:
     if theme in THEME_TAXONOMY:
         return THEME_TAXONOMY[theme]["query_anchor"]
 
-    # Fallback: convert theme_id to readable query
     readable = theme.replace("_", " ")
     return f"{readable} risk exposure analysis financial metrics"
 
@@ -194,6 +212,9 @@ def _format_bank_context(bank_name: str, results: list[dict]) -> str:
 
     Each chunk is wrapped with page number and section header.
     The entire bank's context is wrapped in BEGIN/END markers.
+
+    Requires that metadata_store entries contain a "content" key —
+    guaranteed by BankIndex.add() storing TextChunk objects.
     """
     chunks_formatted: list[str] = []
 
@@ -201,17 +222,18 @@ def _format_bank_context(bank_name: str, results: list[dict]) -> str:
         meta = r["metadata"]
         content = meta.get("content", "")
 
-        # If content isn't stored in metadata, note it
         if not content:
-            # The chunk content might not be in metadata_store
-            # In that case, we need the chunk text from somewhere
-            # For now, use whatever text is available
-            content = json.dumps(meta, indent=2)
-            logger.warning(
-                "chunk_content_not_in_metadata",
+            logger.error(
+                "chunk_content_missing_in_metadata",
                 bank=bank_name,
                 chunk_id=meta.get("chunk_id", "unknown"),
+                page=meta.get("page_number", "unknown"),
+                hint=(
+                    "Re-run kaggle_embed.py to rebuild indices with content storage. "
+                    "Old indices built without content cannot be used for LLM extraction."
+                ),
             )
+            continue
 
         chunk_text = CHUNK_TEMPLATE.format(
             page_number=meta.get("page_number", "N/A"),
@@ -220,9 +242,14 @@ def _format_bank_context(bank_name: str, results: list[dict]) -> str:
         )
         chunks_formatted.append(chunk_text)
 
+    if not chunks_formatted:
+        raise RuntimeError(
+            f"All retrieved chunks for {bank_name} are missing content. "
+            f"Rebuild the FAISS indices using the updated kaggle_embed.py."
+        )
+
     chunks_joined = "\n\n---\n\n".join(chunks_formatted)
 
-    # Determine fiscal year and doc type from first result
     first_meta = results[0]["metadata"]
     fiscal_year = first_meta.get("fiscal_year", "N/A")
     document_type = first_meta.get("document_type", "N/A")
@@ -242,13 +269,9 @@ def _synthesize_insights(
 ) -> str:
     """
     Generate cross-cutting insights by making a second LLM call.
-
-    Takes the individual extraction JSONs and asks the LLM to
-    synthesize a comparative analysis.
     """
     settings = get_settings()
 
-    # Build extractions summary for the synthesis prompt
     extractions_summary = []
     for ext in extractions:
         summary = {
@@ -286,19 +309,18 @@ def _synthesize_insights(
         response = llm.invoke(prompt_text)
         insights = response.content.strip()
 
-        # Truncate to 2000 chars (PeerComparisonReport field limit)
         if len(insights) > 2000:
             insights = insights[:1997] + "..."
 
         logger.info("synthesis_complete", theme=theme, insights_chars=len(insights))
         return insights
 
-    except Exception as e:
-        logger.error("synthesis_failed", theme=theme, error=str(e)[:200])
-        # Return a fallback instead of crashing the whole pipeline
+    except Exception as exc:
+        logger.error("synthesis_failed", theme=theme, error=str(exc)[:200])
         return (
             f"Cross-cutting synthesis unavailable due to LLM error. "
             f"Individual bank extractions are available in the report. "
-            f"Banks compared: {', '.join(e.bank_name for e in extractions)}. "
-            f"Risk scores: {', '.join(f'{e.bank_name}={e.risk_score}' for e in extractions)}."
+            f"Banks compared: {', '.join(ext.bank_name for ext in extractions)}. "
+            f"Risk scores: {', '.join(f'{ext.bank_name}={ext.risk_score}' for ext in extractions)}."
         )
+        

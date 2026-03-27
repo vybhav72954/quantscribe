@@ -16,22 +16,32 @@ class CitationTrace(BaseModel):
     """
     Every extracted metric MUST have one of these.
     This is what makes the system auditable.
+
+    Design notes:
+    - chunk_id defaults to "" — the LLM has no knowledge of SHA-256 chunk IDs.
+      It is back-filled from the metadata_store after retrieval if needed.
+    - relevance_score defaults to 0.0 — the LLM has no knowledge of FAISS
+      cosine similarity scores. It is back-filled in peer_comparison.py.
     """
 
-    chunk_id: str = Field(description="ID of the source chunk from FAISS retrieval")
+    chunk_id: str = Field(
+        default="",
+        description="ID of the source chunk. Do not set — back-filled from retrieval.",
+    )
     bank_name: str
     document_type: str
     fiscal_year: str
     page_number: int = Field(ge=1)
     section_header: Optional[str] = None
     relevance_score: float = Field(
+        default=0.0,
         ge=0.0,
         le=1.0,
-        description="Cosine similarity score from FAISS retrieval",
+        description="Cosine similarity score. Do not set — back-filled from retrieval.",
     )
     source_excerpt: str = Field(
         max_length=500,
-        description="The exact text span from the chunk that supports this metric",
+        description="The exact text span from the chunk that supports this metric.",
     )
 
 
@@ -40,6 +50,8 @@ class ExtractedMetric(BaseModel):
     A single quantitative or qualitative metric extracted by the LLM.
 
     At least one of metric_value or qualitative_value must be set.
+    If neither is provided by the LLM, qualitative_value is auto-set
+    to "not_disclosed" rather than raising a hard validation error.
     """
 
     metric_name: str = Field(
@@ -61,12 +73,15 @@ class ExtractedMetric(BaseModel):
     citation: CitationTrace
 
     @model_validator(mode="after")
-    def at_least_one_value(self) -> "ExtractedMetric":
-        """Ensure at least one of metric_value or qualitative_value is set."""
+    def ensure_at_least_one_value(self) -> "ExtractedMetric":
+        """
+        Ensure at least one of metric_value or qualitative_value is set.
+
+        Instead of raising, auto-fills qualitative_value with "not_disclosed"
+        so the LLM response is never hard-rejected for this constraint alone.
+        """
         if self.metric_value is None and self.qualitative_value is None:
-            raise ValueError(
-                f"Metric '{self.metric_name}' must have either metric_value or qualitative_value"
-            )
+            self.qualitative_value = "not_disclosed"
         return self
 
 

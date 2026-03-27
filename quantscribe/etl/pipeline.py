@@ -80,7 +80,7 @@ def run_etl_pipeline(
     else:
         page_indices = list(range(total_pages))
 
-    # ── Classify pages one at a time (avoids loading all 500+ pages) ──
+    # ── Classify pages one at a time (avoids loading all 500+ pages at once) ──
     pages_to_process = []
     for pg_idx in page_indices:
         try:
@@ -93,7 +93,8 @@ def run_etl_pipeline(
     last_known_header: Optional[str] = None
     stats = {"narrative": 0, "tabular": 0, "mixed": 0, "graphical": 0, "errors": 0}
 
-    for parsed_page in pages_to_process:
+    from tqdm import tqdm
+    for parsed_page in tqdm(pages_to_process, desc=f"ETL {bank_name}", unit="page"):
         page_idx = parsed_page.page_number - 1  # Convert back to 0-indexed
         page_type = parsed_page.page_type
 
@@ -252,8 +253,27 @@ def _process_mixed_page(
     fiscal_year: str,
     last_known_header: Optional[str],
 ) -> tuple[list[TextChunk], Optional[str]]:
-    """Extract and chunk a MIXED page. Returns (chunks, detected_header)."""
-    result = handle_mixed_page(page_idx, pdf_path)
+    """
+    Extract and chunk a MIXED page. Returns (chunks, detected_header).
+
+    If the mixed page handler fails for any reason (malformed PDF objects,
+    pdfminer parse errors, etc.), degrades gracefully to pure narrative
+    extraction rather than crashing the whole pipeline.
+    """
+    try:
+        result = handle_mixed_page(page_idx, pdf_path)
+    except Exception as e:
+        logger.error(
+            "mixed_page_handler_failed",
+            page=page_idx + 1,
+            error=str(e)[:300],
+            fallback="degrading_to_narrative",
+        )
+        # Degrade gracefully — treat the whole page as narrative
+        return _process_narrative_page(
+            page_idx, pdf_path, bank_name, document_type,
+            fiscal_year, last_known_header,
+        )
 
     # Detect section header from narrative blocks
     header = detect_section_header(result["narrative_blocks"], page_idx + 1)

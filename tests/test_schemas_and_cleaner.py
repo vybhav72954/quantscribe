@@ -132,22 +132,24 @@ class TestChunkMetadata:
 
 class TestExtractedMetric:
     def test_requires_at_least_one_value(self):
-        with pytest.raises(Exception):
-            ExtractedMetric(
-                metric_name="test_metric",
-                metric_value=None,
-                qualitative_value=None,
-                confidence="high",
-                citation=CitationTrace(
-                    chunk_id="abc",
-                    bank_name="SBI",
-                    document_type="annual_report",
-                    fiscal_year="FY24",
-                    page_number=1,
-                    relevance_score=0.9,
-                    source_excerpt="some text",
-                ),
-            )
+        # Validator no longer raises — it auto-fills qualitative_value="not_disclosed"
+        # so Gemini responses with null/null don't crash the entire extraction.
+        metric = ExtractedMetric(
+            metric_name="test_metric",
+            metric_value=None,
+            qualitative_value=None,
+            confidence="high",
+            citation=CitationTrace(
+                chunk_id="abc",
+                bank_name="SBI",
+                document_type="annual_report",
+                fiscal_year="FY24",
+                page_number=1,
+                relevance_score=0.9,
+                source_excerpt="some text",
+            ),
+        )
+        assert metric.qualitative_value == "not_disclosed"
 
     def test_numeric_metric_valid(self):
         metric = ExtractedMetric(
@@ -180,3 +182,4 @@ class TestEvalTestCase:
             source_document="HDFC_Bank_AR_FY24.pdf",
         )
         assert len(tc.expected_metrics) == 2
+        

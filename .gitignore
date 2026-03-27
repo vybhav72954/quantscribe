@@ -2,7 +2,8 @@
 reports/
 reports
 New folder/
-data/pdfs/
+data/pdfs/*.pdf
+data/chunks/*
 
 # ── Python ──
 __pycache__/
@@ -26,15 +27,12 @@ env/
 *.swo
 
 # ── Data (too large for git) ──
-data/pdfs/*.pdf
-indices/**/*.faiss
-indices/**/*.json
-!indices/.gitkeep
+!indices/**/*.faiss
+!indices/**/*.json
 
 # ── Logs ──
 logs/**/*.log
 logs/**/*.json
-!logs/.gitkeep
 logs/*.jsonl
 
 # ── OS ──

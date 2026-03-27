@@ -143,20 +143,30 @@ def extract_tables(
     Returns:
         List of tables. Each table is a list of row-dicts.
         Example: [[{"Metric": "NPA", "FY25": "1.2%"}, ...], ...]
+        Returns empty list on any extraction failure.
     """
     all_tables: list[list[dict]] = []
 
     # ── Primary: pdfplumber ──
-    with pdfplumber.open(pdf_path) as pdf:
-        if page_number >= len(pdf.pages):
-            return []
-        page = pdf.pages[page_number]
-        raw_tables = page.extract_tables()
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            if page_number >= len(pdf.pages):
+                return []
+            page = pdf.pages[page_number]
+            raw_tables = page.extract_tables()
 
-    for table_idx, raw_table in enumerate(raw_tables):
-        parsed = _parse_raw_table(raw_table, page_number, table_idx)
-        if parsed:
-            all_tables.append(parsed)
+        for table_idx, raw_table in enumerate(raw_tables):
+            parsed = _parse_raw_table(raw_table, page_number, table_idx)
+            if parsed:
+                all_tables.append(parsed)
+
+    except Exception as e:
+        logger.warn(
+            "pdfplumber_extract_tables_failed",
+            page=page_number + 1,
+            error=str(e)[:200],
+        )
+        # Fall through to camelot
 
     # ── Fallback: camelot-py ──
     if not all_tables and use_camelot_fallback:
@@ -184,13 +194,23 @@ def extract_table_bboxes(page_number: int, pdf_path: str) -> list[tuple]:
     Get table bounding boxes for a page (used by mixed_page_handler).
 
     Returns list of (x0, y0, x1, y1) tuples.
+    Returns empty list on any failure — callers treat missing bboxes
+    as "no tables", degrading gracefully to pure narrative extraction.
     """
-    with pdfplumber.open(pdf_path) as pdf:
-        if page_number >= len(pdf.pages):
-            return []
-        page = pdf.pages[page_number]
-        tables = page.find_tables()
-        return [t.bbox for t in tables]
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            if page_number >= len(pdf.pages):
+                return []
+            page = pdf.pages[page_number]
+            tables = page.find_tables()
+            return [t.bbox for t in tables]
+    except Exception as e:
+        logger.warn(
+            "extract_table_bboxes_failed",
+            page=page_number + 1,
+            error=str(e)[:200],
+        )
+        return []
 
 
 # ── Internal Helpers ──
@@ -361,3 +381,4 @@ def _try_camelot(page_number: int, pdf_path: str) -> list[list[dict]]:
             logger.warn("camelot_stream_failed", page=page_number + 1, error=str(e))
 
     return tables
+    
