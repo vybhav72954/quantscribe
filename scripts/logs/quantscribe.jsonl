@@ -1,0 +1,1 @@
+{"model": "sentence-transformers/all-MiniLM-L6-v2", "dim": 384, "event": "embedding_pipeline_init", "level": "info", "timestamp": "2026-03-27T06:23:38.270854Z"}

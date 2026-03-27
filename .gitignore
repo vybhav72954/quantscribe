@@ -42,3 +42,6 @@ Thumbs.db
 # ── Jupyter / Kaggle ──
 .ipynb_checkpoints/
 *.ipynb
+
+# --- Output ---
+quantscribe.jsonl
