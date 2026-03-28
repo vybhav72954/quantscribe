@@ -12,16 +12,12 @@ Prerequisites:
   OR pass --live to run extraction live
 
 Usage:
-    # Evaluate a saved report
     python scripts/run_eval.py --theme credit_risk
 
-    # Run live extraction + evaluation
     python scripts/run_eval.py --theme credit_risk --live
 
-    # All themes
     python scripts/run_eval.py --theme credit_risk capital_adequacy liquidity_risk unsecured_lending --live
 
-    # Skip RAGAS/DeepEval (just numerical)
     python scripts/run_eval.py --theme credit_risk --numerical-only
 """
 
