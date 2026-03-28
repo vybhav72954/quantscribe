@@ -102,136 +102,145 @@ def main():
     all_scores: list[dict] = []
 
     for theme in args.theme:
-        print(f"\n{'=' * 70}")
-        print(f"  THEME: {theme}")
-        print(f"{'=' * 70}")
+        try:
+            print(f"\n{'=' * 70}")
+            print(f"  THEME: {theme}")
+            print(f"{'=' * 70}")
 
-        # ── Get report (live or saved) ──
-        if args.live:
-            print("\n  Running live extraction...")
-            chain = build_extraction_chain(max_retries=3)
-            report = run_peer_comparison(
-                theme=theme,
-                peer_group=available_banks,
-                retriever=retriever,
-                embedding_pipeline=embedder,
-                extraction_chain=chain,
-                top_k_per_bank=args.top_k,
-            )
-        else:
-            report_path = f"data/reports/{theme}_peer_comparison.json"
-            if not os.path.exists(report_path):
-                print(f"  Report not found at {report_path}")
-                print(f"  Run the pipeline first or use --live")
-                continue
-            with open(report_path) as f:
-                report = PeerComparisonReport(**json.load(f))
-            print(f"  Loaded saved report from {report_path}")
-
-        # ── Retrieve contexts for eval ──
-        query_text = _build_query_text(theme)
-        query_vector = embedder.embed_query(query_text)
-        all_results = retriever.retrieve(query_vector, available_banks, top_k_per_bank=args.top_k)
-
-        # ── Evaluate each bank ──
-        for ext in report.extractions:
-            bank = ext.bank_name
-            print(f"\n  --- {bank} ---")
-
-            # Get gold standard
-            matching_gold = [
-                g for g in all_gold
-                if g.bank_name == bank and g.query_theme == theme
-            ]
-
-            # Build context and response strings for RAGAS/DeepEval
-            bank_results = all_results.get(bank, [])
-            retrieved_contexts = [
-                r["metadata"].get("content", "") for r in bank_results
-                if r["metadata"].get("content")
-            ]
-            llm_response = _extraction_to_text(ext)
-
-            # Track scores
-            theme_scores: dict = {
-                "theme": theme,
-                "bank": bank,
-            }
-
-            # ── Layer 1: Numerical Accuracy ──
-            if matching_gold:
-                gold = matching_gold[0]
-                num_results = evaluate_numerical_accuracy(ext, gold)
-                passed = sum(num_results.values())
-                total = len(num_results)
-                accuracy = passed / max(total, 1)
-                theme_scores["numerical_accuracy"] = round(accuracy, 4)
-
-                print(f"  Numerical Accuracy: {passed}/{total} ({accuracy:.0%})")
-                for metric, ok in num_results.items():
-                    expected = gold.expected_metrics[metric]
-                    actual = next(
-                        (m.metric_value for m in ext.extracted_metrics if m.metric_name == metric),
-                        None,
-                    )
-                    status = "PASS" if ok else "FAIL"
-                    print(f"    [{status}] {metric}: expected={expected}, got={actual}")
-
-                # Retrieval hit rate
-                retrieved_pages = {r["metadata"]["page_number"] for r in bank_results}
-                expected_pages = set(gold.expected_pages)
-                hit = bool(retrieved_pages & expected_pages)
-                theme_scores["retrieval_hit"] = hit
-                print(f"  Retrieval Hit: {'YES' if hit else 'NO'} "
-                      f"(retrieved pages: {sorted(retrieved_pages)}, "
-                      f"expected: {sorted(expected_pages)})")
+            # ── Get report (live or saved) ──
+            if args.live:
+                print("\n  Running live extraction...")
+                chain = build_extraction_chain(max_retries=3)
+                report = run_peer_comparison(
+                    theme=theme,
+                    peer_group=available_banks,
+                    retriever=retriever,
+                    embedding_pipeline=embedder,
+                    extraction_chain=chain,
+                    top_k_per_bank=args.top_k,
+                )
             else:
-                print(f"  No gold standard for {bank}/{theme}")
-                theme_scores["numerical_accuracy"] = -1.0
+                report_path = f"data/reports/{theme}_peer_comparison.json"
+                if not os.path.exists(report_path):
+                    print(f"  Report not found at {report_path}")
+                    print(f"  Run the pipeline first or use --live")
+                    continue
+                with open(report_path) as f:
+                    report = PeerComparisonReport(**json.load(f))
+                print(f"  Loaded saved report from {report_path}")
 
-            # ── Layer 2: RAGAS ──
-            if not args.numerical_only and retrieved_contexts:
-                print(f"  Running RAGAS evaluation...")
-                try:
-                    from quantscribe.evaluation.ragas_eval import run_ragas_evaluation
-                    ragas_scores = run_ragas_evaluation(
-                        theme=theme,
-                        bank_name=bank,
-                        query=query_text,
-                        retrieved_contexts=retrieved_contexts,
-                        llm_response=llm_response,
-                    )
-                    theme_scores.update({f"ragas_{k}": v for k, v in ragas_scores.items()})
-                    for k, v in ragas_scores.items():
-                        score_str = f"{v:.4f}" if v >= 0 else "FAILED"
-                        print(f"    RAGAS {k}: {score_str}")
-                except Exception as e:
-                    print(f"    RAGAS failed: {str(e)[:100]}")
-                    theme_scores["ragas_context_precision"] = -1.0
-                    theme_scores["ragas_faithfulness"] = -1.0
+            # ── Retrieve contexts for eval ──
+            query_text = _build_query_text(theme)
+            query_vector = embedder.embed_query(query_text)
+            all_results = retriever.retrieve(query_vector, available_banks, top_k_per_bank=args.top_k)
 
-            # ── Layer 3: DeepEval ──
-            if not args.numerical_only and retrieved_contexts:
-                print(f"  Running DeepEval evaluation...")
-                try:
-                    from quantscribe.evaluation.deepeval_eval import run_deepeval_evaluation
-                    deep_scores = run_deepeval_evaluation(
-                        theme=theme,
-                        bank_name=bank,
-                        query=query_text,
-                        retrieved_contexts=retrieved_contexts,
-                        llm_response=llm_response,
-                    )
-                    theme_scores.update({f"deepeval_{k}": v for k, v in deep_scores.items()})
-                    for k, v in deep_scores.items():
-                        score_str = f"{v:.4f}" if v >= 0 else "FAILED"
-                        print(f"    DeepEval {k}: {score_str}")
-                except Exception as e:
-                    print(f"    DeepEval failed: {str(e)[:100]}")
-                    theme_scores["deepeval_faithfulness"] = -1.0
-                    theme_scores["deepeval_answer_relevancy"] = -1.0
+            # ── Evaluate each bank ──
+            for ext in report.extractions:
+                bank = ext.bank_name
+                print(f"\n  --- {bank} ---")
 
-            all_scores.append(theme_scores)
+                # Get gold standard
+                matching_gold = [
+                    g for g in all_gold
+                    if g.bank_name == bank and g.query_theme == theme
+                ]
+
+                # Build context and response strings for RAGAS/DeepEval
+                bank_results = all_results.get(bank, [])
+                retrieved_contexts = [
+                    r["metadata"].get("content", "") for r in bank_results
+                    if r["metadata"].get("content")
+                ]
+                llm_response = _extraction_to_text(ext)
+
+                # Track scores
+                theme_scores: dict = {
+                    "theme": theme,
+                    "bank": bank,
+                }
+
+                # ── Layer 1: Numerical Accuracy ──
+                if matching_gold:
+                    gold = matching_gold[0]
+                    num_results = evaluate_numerical_accuracy(ext, gold)
+                    passed = sum(num_results.values())
+                    total = len(num_results)
+                    accuracy = passed / max(total, 1)
+                    theme_scores["numerical_accuracy"] = round(accuracy, 4)
+
+                    print(f"  Numerical Accuracy: {passed}/{total} ({accuracy:.0%})")
+                    for metric, ok in num_results.items():
+                        expected = gold.expected_metrics[metric]
+                        actual = next(
+                            (m.metric_value for m in ext.extracted_metrics if m.metric_name == metric),
+                            None,
+                        )
+                        status = "PASS" if ok else "FAIL"
+                        print(f"    [{status}] {metric}: expected={expected}, got={actual}")
+
+                    # Retrieval hit rate
+                    retrieved_pages = {r["metadata"]["page_number"] for r in bank_results}
+                    expected_pages = set(gold.expected_pages)
+                    hit = bool(retrieved_pages & expected_pages)
+                    theme_scores["retrieval_hit"] = hit
+                    print(f"  Retrieval Hit: {'YES' if hit else 'NO'} "
+                          f"(retrieved pages: {sorted(retrieved_pages)}, "
+                          f"expected: {sorted(expected_pages)})")
+                else:
+                    print(f"  No gold standard for {bank}/{theme}")
+                    theme_scores["numerical_accuracy"] = -1.0
+
+                # ── Layer 2: RAGAS ──
+                if not args.numerical_only and retrieved_contexts:
+                    print(f"  Running RAGAS evaluation...")
+                    try:
+                        from quantscribe.evaluation.ragas_eval import run_ragas_evaluation
+                        ragas_scores = run_ragas_evaluation(
+                            theme=theme,
+                            bank_name=bank,
+                            query=query_text,
+                            retrieved_contexts=retrieved_contexts,
+                            llm_response=llm_response,
+                        )
+                        theme_scores.update({f"ragas_{k}": v for k, v in ragas_scores.items()})
+                        for k, v in ragas_scores.items():
+                            score_str = f"{v:.4f}" if v >= 0 else "FAILED"
+                            print(f"    RAGAS {k}: {score_str}")
+                    except Exception as e:
+                        print(f"    RAGAS failed: {str(e)[:100]}")
+                        theme_scores["ragas_context_precision"] = -1.0
+                        theme_scores["ragas_faithfulness"] = -1.0
+
+                # ── Layer 3: DeepEval ──
+                if not args.numerical_only and retrieved_contexts:
+                    print(f"  Running DeepEval evaluation...")
+                    try:
+                        from quantscribe.evaluation.deepeval_eval import run_deepeval_evaluation
+                        deep_scores = run_deepeval_evaluation(
+                            theme=theme,
+                            bank_name=bank,
+                            query=query_text,
+                            retrieved_contexts=retrieved_contexts,
+                            llm_response=llm_response,
+                        )
+                        theme_scores.update({f"deepeval_{k}": v for k, v in deep_scores.items()})
+                        for k, v in deep_scores.items():
+                            score_str = f"{v:.4f}" if v >= 0 else "FAILED"
+                            print(f"    DeepEval {k}: {score_str}")
+                    except Exception as e:
+                        print(f"    DeepEval failed: {str(e)[:100]}")
+                        theme_scores["deepeval_faithfulness"] = -1.0
+                        theme_scores["deepeval_answer_relevancy"] = -1.0
+
+                all_scores.append(theme_scores)
+
+        except Exception as e:
+            print(f"\n  ERROR processing theme '{theme}': {e}")
+            print(f"  Continuing to next theme...")
+            continue
+
+        # Sleep between themes to avoid rate limits
+        time.sleep(30)
 
     # ═══════════════════════════════════════════════
     # FINAL SCORECARD

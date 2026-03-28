@@ -5,7 +5,7 @@ End-to-end pipeline:
 1. Embed the thematic query using pre-defined query anchors
 2. Fan-out retrieval to each bank's FAISS index independently
 3. Format retrieved chunks with rigid delimiters
-4. Run LLM extraction ONCE PER BANK (prevents cross-entity contamination)
+4. Run LLM extraction ONCE PER BANK in parallel (ThreadPoolExecutor)
 5. Back-fill relevance_score on each CitationTrace from actual FAISS scores
 6. Rank banks by risk_score
 7. Synthesize cross-cutting insights via a second LLM call
@@ -26,6 +26,7 @@ Usage:
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -91,59 +92,49 @@ def run_peer_comparison(
         chunks_per_bank={b: len(r) for b, r in all_results.items()},
     )
 
-    # ── Step 3: Format contexts + run extraction per bank ──
-    extractions: list[ThematicExtraction] = []
-
+    # ── Step 3: Prepare extraction tasks ──
+    extraction_tasks: dict[str, dict] = {}
     for bank_name in peer_group:
         if bank_name not in all_results or not all_results[bank_name]:
             logger.warning("no_chunks_retrieved", bank=bank_name, theme=theme)
             continue
 
         results = all_results[bank_name]
+        bank_context = _format_bank_context(bank_name, results)
 
-        # Build a page → score lookup for back-filling relevance_score
-        # after extraction (the LLM doesn't know FAISS scores)
-        page_score_map: dict[int, float] = {
+        page_score_map = {
             r["metadata"]["page_number"]: r["score"]
             for r in results
         }
 
-        # Format chunks with rigid delimiters
-        bank_context = _format_bank_context(bank_name, results)
+        extraction_tasks[bank_name] = {
+            "context": bank_context,
+            "page_score_map": page_score_map,
+            "min_score": min(r["score"] for r in results),
+        }
 
+    # ── Step 4: Run extractions in parallel ──
+    extractions: list[ThematicExtraction] = []
+
+    def _extract_bank(bank_name: str, task: dict) -> tuple[str, ThematicExtraction | None]:
+        """Extract a single bank. Thread-safe — no shared mutable state."""
         logger.info(
             "extraction_start",
             bank=bank_name,
-            chunks=len(results),
-            context_chars=len(bank_context),
+            context_chars=len(task["context"]),
         )
-
-        # ── Step 4: Call extraction chain (ONE call per bank) ──
         try:
             extraction = extraction_chain({
                 "theme": theme,
-                "bank_contexts": bank_context,
+                "bank_contexts": task["context"],
             })
-
-            # ── Step 5: Back-fill relevance_score from real FAISS scores ──
-            # The LLM leaves relevance_score=0.0 (the default).
-            # We fill it with the actual cosine similarity for the cited page.
-            # If the page isn't in our retrieval results, use the minimum score.
-            min_score = min(r["score"] for r in results)
-            for metric in extraction.extracted_metrics:
-                cited_page = metric.citation.page_number
-                metric.citation.relevance_score = page_score_map.get(
-                    cited_page, min_score
-                )
-
-            extractions.append(extraction)
-
             logger.info(
                 "extraction_complete",
                 bank=bank_name,
                 risk_score=extraction.risk_score,
                 metrics=len(extraction.extracted_metrics),
             )
+            return bank_name, extraction
         except Exception as e:
             logger.error(
                 "extraction_failed_for_bank",
@@ -151,7 +142,29 @@ def run_peer_comparison(
                 theme=theme,
                 error=str(e)[:300],
             )
-            # Continue with other banks — don't abort the whole comparison
+            return bank_name, None
+
+    with ThreadPoolExecutor(max_workers=len(extraction_tasks)) as executor:
+        futures = {
+            executor.submit(_extract_bank, bank_name, task): bank_name
+            for bank_name, task in extraction_tasks.items()
+        }
+
+        for future in as_completed(futures):
+            bank_name, extraction = future.result()
+
+            if extraction is None:
+                continue
+
+            # ── Step 5: Back-fill relevance_score from real FAISS scores ──
+            task = extraction_tasks[bank_name]
+            for metric in extraction.extracted_metrics:
+                cited_page = metric.citation.page_number
+                metric.citation.relevance_score = task["page_score_map"].get(
+                    cited_page, task["min_score"]
+                )
+
+            extractions.append(extraction)
 
     if not extractions:
         raise RuntimeError(
@@ -193,29 +206,13 @@ def run_peer_comparison(
 
 
 def _build_query_text(theme: str) -> str:
-    """
-    Build the query text for embedding.
-
-    Uses the pre-defined query_anchor from THEME_TAXONOMY if available,
-    otherwise constructs a generic query from the theme name.
-    """
     if theme in THEME_TAXONOMY:
         return THEME_TAXONOMY[theme]["query_anchor"]
-
     readable = theme.replace("_", " ")
     return f"{readable} risk exposure analysis financial metrics"
 
 
 def _format_bank_context(bank_name: str, results: list[dict]) -> str:
-    """
-    Format retrieved chunks for a single bank using rigid delimiters.
-
-    Each chunk is wrapped with page number and section header.
-    The entire bank's context is wrapped in BEGIN/END markers.
-
-    Requires that metadata_store entries contain a "content" key —
-    guaranteed by BankIndex.add() storing TextChunk objects.
-    """
     chunks_formatted: list[str] = []
 
     for r in results:
@@ -267,9 +264,6 @@ def _synthesize_insights(
     peer_group: list[str],
     extractions: list[ThematicExtraction],
 ) -> str:
-    """
-    Generate cross-cutting insights by making a second LLM call.
-    """
     settings = get_settings()
 
     extractions_summary = []
@@ -323,4 +317,3 @@ def _synthesize_insights(
             f"Banks compared: {', '.join(ext.bank_name for ext in extractions)}. "
             f"Risk scores: {', '.join(f'{ext.bank_name}={ext.risk_score}' for ext in extractions)}."
         )
-        
