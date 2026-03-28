@@ -43,7 +43,12 @@ Thumbs.db
 .ipynb_checkpoints/
 *.ipynb
 
+<<<<<<< HEAD
 .deepeval/
 .pytest_cache/
 .streamlit/secrets.toml
 data/eval_results/
+=======
+# ── Project Structure ──
+project_structure.txt
+>>>>>>> cdd5486 (Updated README.md)
